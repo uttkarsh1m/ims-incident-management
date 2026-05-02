@@ -1,0 +1,152 @@
+{
+  "description": "Sample failure event sequence: RDBMS outage → MCP Host failure → Cache degradation → Queue backup → API errors → NoSQL degradation",
+  "scenario": "cascading_failure",
+  "usage": {
+    "run_full_scenario": "npx ts-node --project tsconfig.json simulate-failure.ts",
+    "run_single_phase":  "npx ts-node --project tsconfig.json simulate-failure.ts --phase 1",
+    "run_burst_test":    "npx ts-node --project tsconfig.json simulate-failure.ts --burst",
+    "custom_target":     "npx ts-node --project tsconfig.json simulate-failure.ts --url http://localhost:3001"
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "description": "RDBMS Primary Failure",
+      "severity": "P0",
+      "alert_strategy": "RdbmsAlertStrategy — escalates to CTO + DBA on-call",
+      "signal_count": 5,
+      "sample_signal": {
+        "component_id": "RDBMS_PRIMARY_01",
+        "component_type": "RDBMS",
+        "severity": "P0",
+        "message": "Connection pool exhausted — primary database unreachable",
+        "metadata": {
+          "host": "db-primary-01.internal",
+          "port": 5432,
+          "pool_size": 20,
+          "active_connections": 20,
+          "error_code": "ECONNREFUSED"
+        }
+      }
+    },
+    {
+      "phase": 2,
+      "description": "MCP Host Failure — cascading from RDBMS",
+      "severity": "P1",
+      "alert_strategy": "McpHostAlertStrategy — escalates to Platform on-call",
+      "signal_count": 3,
+      "sample_signal": {
+        "component_id": "MCP_HOST_CLUSTER_01",
+        "component_type": "MCP_HOST",
+        "severity": "P1",
+        "message": "MCP Host health check failing — upstream RDBMS dependency unavailable",
+        "metadata": {
+          "host": "mcp-host-01.internal",
+          "upstream_dependency": "RDBMS_PRIMARY_01",
+          "health_check_failures": 3,
+          "last_successful_check": "2026-05-01T10:00:00Z"
+        }
+      }
+    },
+    {
+      "phase": 3,
+      "description": "Cache Cluster Degradation — read-through failing",
+      "severity": "P2",
+      "alert_strategy": "CacheAlertStrategy — notifies Infra team",
+      "signal_count": 8,
+      "sample_signal": {
+        "component_id": "CACHE_CLUSTER_01",
+        "component_type": "CACHE",
+        "severity": "P2",
+        "message": "Cache read-through failure — hit rate dropped to 15%",
+        "metadata": {
+          "cluster": "redis-cluster-01",
+          "hit_rate": 15,
+          "eviction_rate": 85,
+          "memory_usage_pct": 98
+        }
+      }
+    },
+    {
+      "phase": 4,
+      "description": "Async Queue Backup — consumers stalled",
+      "severity": "P1",
+      "alert_strategy": "AsyncQueueAlertStrategy — notifies Messaging team",
+      "signal_count": 4,
+      "sample_signal": {
+        "component_id": "ASYNC_QUEUE_MAIN",
+        "component_type": "ASYNC_QUEUE",
+        "severity": "P1",
+        "message": "Message queue depth critical: 200000 messages pending",
+        "metadata": {
+          "queue_name": "main-processing-queue",
+          "depth": 200000,
+          "consumer_lag_seconds": 480,
+          "dead_letter_count": 2000
+        }
+      }
+    },
+    {
+      "phase": 5,
+      "description": "API Gateway Errors — 5xx rate climbing",
+      "severity": "P1",
+      "alert_strategy": "ApiAlertStrategy — escalates to API on-call",
+      "signal_count": 6,
+      "sample_signal": {
+        "component_id": "API_GATEWAY_01",
+        "component_type": "API",
+        "severity": "P1",
+        "message": "API error rate elevated: 45% of requests returning 5xx",
+        "metadata": {
+          "endpoint": "/api/v1/transactions",
+          "error_rate_pct": 45,
+          "p99_latency_ms": 9000,
+          "requests_per_sec": 1200
+        }
+      }
+    },
+    {
+      "phase": 6,
+      "description": "NoSQL Store Degradation — replica set election",
+      "severity": "P2",
+      "alert_strategy": "NoSqlAlertStrategy — notifies Data team",
+      "signal_count": 3,
+      "sample_signal": {
+        "component_id": "NOSQL_STORE_01",
+        "component_type": "NOSQL",
+        "severity": "P2",
+        "message": "MongoDB replica set election in progress — writes temporarily unavailable",
+        "metadata": {
+          "replica_set": "rs0",
+          "primary": null,
+          "election_started_at": "2026-05-01T10:00:00Z",
+          "affected_collections": ["signals", "events"]
+        }
+      }
+    },
+    {
+      "phase": 7,
+      "description": "Debounce test — 20 rapid signals for same component",
+      "severity": "P0",
+      "expected_result": "All 20 signals linked to the SAME work item (debounced within 10s window)",
+      "signal_count": 20,
+      "delivery": "batch",
+      "sample_signal": {
+        "component_id": "RDBMS_PRIMARY_01",
+        "component_type": "RDBMS",
+        "severity": "P0",
+        "message": "Repeated connection failure #1",
+        "metadata": {
+          "attempt": 1
+        }
+      }
+    }
+  ],
+  "expected_work_items": [
+    { "component_id": "RDBMS_PRIMARY_01",  "severity": "P0", "min_signals": 20 },
+    { "component_id": "MCP_HOST_CLUSTER_01", "severity": "P1", "min_signals": 3 },
+    { "component_id": "CACHE_CLUSTER_01",  "severity": "P2", "min_signals": 8 },
+    { "component_id": "ASYNC_QUEUE_MAIN",  "severity": "P1", "min_signals": 4 },
+    { "component_id": "API_GATEWAY_01",    "severity": "P1", "min_signals": 6 },
+    { "component_id": "NOSQL_STORE_01",    "severity": "P2", "min_signals": 3 }
+  ]
+}
